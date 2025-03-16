@@ -1,14 +1,15 @@
 #include <iostream>
 #include <rpc_test.pb.h>
 
-
 #include "hnc_rpc.h"
 
 using namespace hnc::rpc;
 
 
 int main(int argc, char **argv) {
+    hnc::core::logger::change_log_file_name("rpc/caller_log");
     rpc_init();
+
 
     // 客户端调用服务器的 rpc 方法需要创建 代理对象， stub, 并将 框架重写的 rpc_channel类传递给 自定义服务器
     rpc_test::UserServiceRpc_Stub stub(get_rpc_channel());

@@ -2,6 +2,8 @@
 #include "hnc_rpc_d.h"
 #include "hnc_rpc_header.pb.h"
 
+#include "hnc_log.h"
+
 #include <functional>
 
 // 用于发布rpc服务的框架类
@@ -25,7 +27,9 @@ void HncRpcServer::add_rpc_service(::google::protobuf::Service *service) noexcep
         const google::protobuf::MethodDescriptor* md_ptr = sd_ptr->method(i);
         // 将 该方法 名 与 方法描述指针 存入当前服务中
         service_info.m_method_list_.emplace(md_ptr->name(), md_ptr);
-        std::cout << "rpc_server add [" << sd_ptr->name() << "]->[" << md_ptr->name() << "] successful!\n";
+        std::string msg = "rpc_server add [" + sd_ptr->name() + "]->[" + md_ptr->name() + "] successful!";
+        std::cout << msg << '\n';
+        core::logger::log_debug(msg);
     }
     // 将该服务存入 当前服务器 所有发布的服务列表 中, 以便后续收到服务请求时 可以 找到对应的服务方法来反序列化
     m_service_list_.emplace(sd_ptr->name(), service_info); // 服务名  ->  服务信息
@@ -42,6 +46,7 @@ void HncRpcServer::run(const uint8_t threads) {
     const muduo::net::InetAddress address(HncRpc::Load("rpc_server_ip").c_str(), atoi(HncRpc::Load("rpc_server_port").c_str()));
 
     std::cout << "HncRpcServer init...\n";
+    core::logger::log_debug("HncRpcServer init...");
     // 创建 TCP 服务器
     muduo::net::TcpServer rpc_server(&m_loop_, address, "HncRpcServer");
 
@@ -53,6 +58,7 @@ void HncRpcServer::run(const uint8_t threads) {
     rpc_server.setThreadNum(threads);
 
     std::cout << "HncRpcServer start service at " << address.toIpPort().c_str() << ", start listening...\n";
+    core::logger::log_debug("HncRpcServer start service at" + address.toIpPort() + ", start listening...");
 
     // 启动服务器所有线程
     rpc_server.start();
@@ -67,7 +73,10 @@ void HncRpcServer::OnConnection(const muduo::net::TcpConnectionPtr &conn) const 
     // 若是连接关闭的事件， 则 主动关闭 服务器 -> 客户端 的 传输 , shutdown 并不是 四次挥手！！！
     if (conn->disconnected()) {
         conn->shutdown();
+        core::logger::log_debug("HncRpcServer : client close");
+        return;
     }
+    core::logger::log_debug("HncRpcServer : client arrive");
 }
 
 /**
@@ -89,6 +98,7 @@ void HncRpcServer::OnMessage(const muduo::net::TcpConnectionPtr &conn,
     // 开始反序列化 自定义 rpc_header 的数据   server_name, method_name, args_size
     hnc_rpc::HncRpcHeader rpc_header;
     if (!rpc_header.ParseFromString(std::string_view(receive_buffer.data() + 4, header_size))) {
+        core::logger::log_debug("rpc_server parse rpc_header failed!");
         std::cout << "rpc_server parse rpc_header failed!\n";
         return;
     }
@@ -99,13 +109,17 @@ void HncRpcServer::OnMessage(const muduo::net::TcpConnectionPtr &conn,
     // 检查 服务 是否存在当前 rpc 服务器上
     const auto service_it = m_service_list_.find(service_name);
     if (service_it == m_service_list_.end()) {
-        std::cout << "rpc_server -> service:" << service_name << " is not exist!" << std::endl;
+        const std::string msg = "rpc_server -> service:" + service_name + " is not exist!";
+        core::logger::log_debug(msg);
+        std::cout << msg << std::endl;
         return;
     }
     // 检查 方法 是否存在对应的 服务 中
     const auto method_it = service_it->second.m_method_list_.find(rpc_header.method_name());
     if (method_it == service_it->second.m_method_list_.end()) {
-        std::cout << "rpc_server -> method: " << service_name << "-" << method_name <<" is not exist!" << std::endl;
+        const std::string msg = "rpc_server -> method: " + service_name + '-' + method_name + " is not exist!";
+        core::logger::log_debug(msg);
+        std::cout << msg << std::endl;
         return;
     }
 
@@ -117,18 +131,20 @@ void HncRpcServer::OnMessage(const muduo::net::TcpConnectionPtr &conn,
     google::protobuf::Message *request = service->GetRequestPrototype(method).New();
     if (!request->ParseFromString(std::string_view(receive_buffer.data() + 4 + header_size, rpc_header.args_size()))) {
         std::cout << "args parse failed!" << std::endl;
+        core::logger::log_debug("args parse failed!");
         return;
     }
     // 创建response， response 由 对应业务逻辑去填充
     google::protobuf::Message *response = service->GetResponsePrototype(method).New();
 
     // 测试输出
-    std::cout << " header_size = " << header_size
-                << "\n service_name = " << service_name
-                << "\n method_name = " << method_name
-                << "\n args_size = " << rpc_header.args_size()
-                << "\n args_str = " << std::string_view(receive_buffer.data() + 4 + header_size, rpc_header.args_size()) << '\n';
-
+    const std::string test_msg = " header_size = " + std::to_string(header_size)
+                + "\n service_name = " + service_name
+                + "\n method_name = " + method_name
+                + "\n args_size = " + std::to_string(rpc_header.args_size())
+                + "\n args_str = " + std::string(receive_buffer.data() + 4 + header_size, rpc_header.args_size()) + '\n';
+    std::cout << test_msg << std::endl;
+    core::logger::log_debug(test_msg);
 
     // 框架根据method描述调用对应service的虚函数， 即调用了service派生类
     // 然后在 protobuf 生成的 service_rpc 类内的虚函数里根据方法描述调用对应的方法
@@ -154,9 +170,11 @@ void HncRpcServer::SendRpcResponse(const muduo::net::TcpConnectionPtr &conn,
         // 将响应数据发回客户端， 客户端收到数据后 会向服务器发送 close(), 即由客户端主动发起第一次挥手
         conn->send(response_str);
     } else {
-        std::cerr << "serial response_str error!" << std::endl;
+        core::logger::log_debug("rpc_server serial response_str error!");
+        std::cerr << "rpc_server serial response_str error!" << std::endl;
     }
     // 服务器后续不再向客户端发送数据， 可以调用 shutdown
     conn->shutdown();
+    core::logger::log_debug("rpc_server to client shutdown!");
 }
 }

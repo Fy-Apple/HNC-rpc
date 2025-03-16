@@ -51,7 +51,7 @@ public:
 
 
 int main(int argc, char** argv) {
-
+    hnc::core::logger::change_log_file_name("rpc/server_log");
     // 初始化rpc框架( 读取配置文件参数 )
     rpc_init();
 

@@ -14,11 +14,8 @@ set(SOURCES
 # 生成静态库
 add_library(hnc_rpc STATIC ${SOURCES})
 
-target_link_libraries(hnc_rpc muduo_net muduo_base pthread)
+target_link_libraries(hnc_rpc hnc_core muduo_net muduo_base pthread)
 
-
-## 如果有外部依赖库的话（比如pthread）
-#target_link_libraries(hnc_rpc PUBLIC pthread)
 
 # test
 add_subdirectory(test)
